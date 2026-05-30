@@ -1,0 +1,57 @@
+{
+  "name": "promptpay-qrcode",
+  "version": "1.0.0",
+  "description": "Zero-dependency PromptPay QR payload generator (PromptPay P2P, Tag 30 bill payment / Mae Manee, and KShop)",
+  "main": "index.js",
+  "type": "commonjs",
+  "files": [
+    "crc.js",
+    "promptpay.js",
+    "kshop.js",
+    "decode.js",
+    "image.js",
+    "index.js",
+    "docs/promptpay-qr-structure.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test.js",
+    "example": "node example.js",
+    "example:image": "node example-image.js"
+  },
+  "peerDependencies": {
+    "qrcode": "^1.5.0"
+  },
+  "peerDependenciesMeta": {
+    "qrcode": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "promptpay",
+    "qrcode",
+    "qr",
+    "thai",
+    "thailand",
+    "emvco",
+    "maemanee",
+    "mae-manee",
+    "scb",
+    "kshop",
+    "payment"
+  ],
+  "engines": {
+    "node": ">=12"
+  },
+  "license": "MIT",
+  "author": "devhyphenplus <dev.hyphenplus@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devhyphenplus/promptpay-qrcode.git"
+  },
+  "homepage": "https://github.com/devhyphenplus/promptpay-qrcode#readme",
+  "bugs": {
+    "url": "https://github.com/devhyphenplus/promptpay-qrcode/issues"
+  }
+}
