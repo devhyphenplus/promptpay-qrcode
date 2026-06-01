@@ -126,6 +126,7 @@ function kshopParamsFrom(qr) {
   if (t30['01'] != null) params.billerId = t30['01'];
   // Merchant ref appears in 30/02 (and usually mirrored in 31/02).
   if (t30['02'] != null) params.merchantRef = t30['02'];
+  if (t31['00'] != null) params.innovationAid = t31['00'];
   if (t31['01'] != null) params.innovationSubId = t31['01'];
   if (Object.keys(t51).length) params.cardScheme = t51;
   if (f['52'] != null) params.mcc = f['52'];
@@ -148,4 +149,85 @@ function flattenTag62(tags) {
   return tag ? tag.value : undefined;
 }
 
-module.exports = { decode, parseTLV, kshopParamsFrom };
+/**
+ * Reverse formatMobile: turn a 13-char PromptPay proxy back into a national
+ * mobile number so it round-trips through generatePromptPay.
+ * e.g. "0066812345678" -> "0812345678"
+ * @param {string} proxy
+ * @returns {string}
+ */
+function proxyToMobile(proxy) {
+  let s = String(proxy).replace(/^0+/, ''); // drop the left-pad zeros
+  if (s.startsWith('66')) s = s.slice(2); // drop the country code
+  return '0' + s;
+}
+
+/**
+ * Detect a QR's PromptPay type from its decoded fields.
+ * @param {object} fields decode().fields
+ * @returns {'promptpay'|'kshop'|'billpayment'|'unknown'}
+ */
+function detectType(fields) {
+  if (fields['29']) return 'promptpay';
+  if (fields['30'] && fields['31']) return 'kshop';
+  if (fields['30']) return 'billpayment';
+  return 'unknown';
+}
+
+/**
+ * Detach a master QR into its reusable account info and its per-transaction
+ * values. Works for all three types (auto-detected):
+ *
+ *   - promptpay  : account { mobile | nationalId | ewallet }, transaction { amount, dynamic }
+ *   - billpayment: account { billerId, merchantName?, merchantCity? },
+ *                  transaction { ref1, ref2?, amount, dynamic }
+ *   - kshop      : account = kshopParamsFrom(qr), transaction { amount, reference }
+ *
+ * Regenerate a fresh QR from the parts:
+ *   promptpay   -> generatePromptPay({ ...account, ...transaction })
+ *   billpayment -> generateBillPayment({ ...account, ...transaction })
+ *   kshop       -> generateKShopQR(transaction.amount, transaction.reference, account)
+ *
+ * @param {string|object} qr A payload string or a prior decode() result.
+ * @returns {{ type: string, account: object, transaction: object, decoded: object }}
+ */
+function detach(qr) {
+  const d = typeof qr === 'string' ? decode(qr) : qr;
+  const f = d.fields;
+  const type = detectType(f);
+
+  let account = {};
+  let transaction = {};
+
+  if (type === 'promptpay') {
+    const t29 = f['29'] || {};
+    if (t29['01'] != null) account.mobile = proxyToMobile(t29['01']);
+    else if (t29['02'] != null) account.nationalId = t29['02'];
+    else if (t29['03'] != null) account.ewallet = t29['03'];
+    transaction = { amount: d.amount, dynamic: d.poiMethod === '12' };
+  } else if (type === 'kshop') {
+    account = kshopParamsFrom(d); // includes dynamic + all merchant/card fields
+    // The order reference lives in 30/03 (mirrored in 31/04).
+    const ref = (f['30'] || {})['03'];
+    transaction = { amount: d.amount, reference: ref != null ? ref : undefined };
+  } else if (type === 'billpayment') {
+    const t30 = f['30'] || {};
+    if (t30['01'] != null) account.billerId = t30['01'];
+    if (f['59'] != null) account.merchantName = f['59'];
+    if (f['60'] != null) account.merchantCity = f['60'];
+    transaction = {
+      ref1: t30['02'],
+      ref2: t30['03'] != null ? t30['03'] : undefined,
+      amount: d.amount,
+      dynamic: d.poiMethod === '12',
+    };
+  } else {
+    // Unknown layout: hand back the raw decoded fields so nothing is lost.
+    account = { fields: f };
+    transaction = { amount: d.amount };
+  }
+
+  return { type, account, transaction, decoded: d };
+}
+
+module.exports = { decode, parseTLV, kshopParamsFrom, detach, detectType };

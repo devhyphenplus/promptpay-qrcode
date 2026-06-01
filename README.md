@@ -86,17 +86,39 @@ const config = {
   merchantCity: 'BANGKOK',         // tag 60                    (required)
   // Optional — emitted only when provided:
   // visaTemplate, mastercardTemplate, unionpayTemplate, cardScheme,
-  // mcc, additionalData, dynamic (default true), innovationSubId (default '004')
+  // mcc, additionalData, dynamic (default false), innovationSubId (default '004'),
+  // innovationAid (tag 31 AID — default KShop value; see below)
 };
 
-generateKShopQR(100, 'ORDER0000000001', config);                        // dynamic (POI '12')
-generateKShopQR(100, 'ORDER0000000001', { ...config, dynamic: false }); // static  (POI '11')
+generateKShopQR(100, 'ORDER0000000001', config);                       // static  (POI '11') — default
+generateKShopQR(100, 'ORDER0000000001', { ...config, dynamic: true }); // dynamic (POI '12')
 ```
 
 `amount` (1st arg) and `reference` (2nd arg — the per-order ref placed in tag
-30/03 and 31/04) vary per call. Structural defaults (`dynamic: true`,
+30/03 and 31/04) vary per call. Structural defaults (`dynamic: false`,
 `currency: '764'`, `countryCode: 'TH'`, `innovationSubId: '004'`) live in
 `KSHOP_DEFAULTS`; the required fields are listed in `REQUIRED_FIELDS`.
+
+> **Tag 31 AID (`innovationAid`).** The Bank of Thailand guideline documents
+> `A000000677012004` for the Payment-Innovation template, but **KBank/KShop QRs
+> in the wild use `A000000677010113`**. The library defaults to the KShop value
+> so real KShop QRs round-trip exactly; pass `innovationAid` to override:
+>
+> ```js
+> const { generateKShopQR, AID_PAYMENT_INNOVATION_BOT } = require('promptpay-qrcode');
+> generateKShopQR(100, 'ORDER1', { ...config, innovationAid: AID_PAYMENT_INNOVATION_BOT });
+> ```
+>
+> Both AIDs are exported: `AID_PAYMENT_INNOVATION` (KShop, default) and
+> `AID_PAYMENT_INNOVATION_BOT` (BOT). `detach`/`kshopParamsFrom` capture whichever
+> the source QR used.
+
+> **Static vs dynamic — bank-app compatibility.** KShop defaults to **static
+> (POI `11`) with the amount included**, because that form is accepted by the
+> widest range of apps — including **K PLUS** and the KShop app. In real-device
+> testing, **dynamic (POI `12`) is rejected by K PLUS** for this merchant QR
+> family (though it works in SCB, KTB Next, BBL and UOB). Pass `dynamic: true`
+> only if you specifically target apps that accept POI `12`.
 
 If you already have a master QR for an account, you can decode it and reuse its
 fields — see [`kshopParamsFrom`](#decoding-a-qr-read-a-master-qr-back) below.
@@ -143,6 +165,78 @@ are **not** included in `params` — you supply those per call. Round-trip is
 exact: `generateKShopQR(amount, ref, kshopParamsFrom(qr))` reproduces the
 original master QR byte-for-byte when given the same amount and ref.
 
+### Detaching any master QR (all types)
+
+`detach(qr)` is the generic version: it auto-detects the QR type and splits it
+into reusable **account** info and the per-transaction values, for **all three**
+families. `kshopParamsFrom` is the KShop-specific case underneath it.
+
+```js
+const { detach, generatePromptPay, generateBillPayment, generateKShopQR } = require('promptpay-qrcode');
+
+const { type, account, transaction } = detach(masterQr);
+```
+
+| `type` | `account` (reusable) | `transaction` (per-call) | Regenerate |
+| --- | --- | --- | --- |
+| `'promptpay'` | `{ mobile \| nationalId \| ewallet }` | `{ amount, dynamic }` | `generatePromptPay({ ...account, ...transaction })` |
+| `'billpayment'` | `{ billerId, merchantName?, merchantCity? }` | `{ ref1, ref2?, amount, dynamic }` | `generateBillPayment({ ...account, ...transaction })` |
+| `'kshop'` | full KShop config (= `kshopParamsFrom`) | `{ amount, reference }` | `generateKShopQR(transaction.amount, transaction.reference, account)` |
+
+```js
+// Example: re-issue a bill-payment QR with a new amount, same account
+const { account } = detach(masterBillQr);
+const next = generateBillPayment({ ...account, ref1: 'INV2', amount: 75 });
+```
+
+For PromptPay the mobile proxy is reversed (`0066812345678` → `0812345678`) so
+it round-trips through `generatePromptPay`. `detach` accepts a payload string or
+a prior `decode()` result, and also returns the full `decoded` object.
+`detectType(fields)` is exposed separately if you only need the type.
+
+## CLI
+
+A small command-line inspector ships with the package (`promptpay-qr`, or
+`node cli.js` from the repo). It decodes a payload, validates the CRC, and shows
+the detached account/transaction split and a tag dump — all locally, nothing
+leaves your machine.
+
+```
+# from the repo
+node cli.js '00020101021130...C9ED'
+npm run decode -- '00020101...'          # via the npm script
+
+# installed globally (npm i -g promptpay-qrcode)
+promptpay-qr '00020101...'
+
+# pipe it in, or get raw JSON
+echo '00020101...' | promptpay-qr
+promptpay-qr --json '00020101...'
+```
+
+Example output:
+
+```
+Type      : kshop
+CRC       : C9ED  ✓ valid
+POI       : 11  (static — K PLUS compatible)
+Amount    : (none — payer enters)
+Merchant  : MY SHOP / CITY
+
+Account (reusable):    { billerId, merchantRef, merchantName, ... }
+Transaction (per-call): { amount, reference }
+
+Tags:
+00 02 01
+01 02 11
+30 81
+   00 16 A000000677010112
+   ...
+```
+
+Exit code is `0` for a valid CRC, `1` for an invalid/malformed payload — handy
+in scripts.
+
 ## Rendering to an image (optional)
 
 The core is zero-dependency. To turn a payload into an actual QR image, install
@@ -182,6 +276,8 @@ The second `options` argument is passed straight through to `qrcode`
 | `decode(payload)` | structured decode + CRC validation |
 | `parseTLV(payload)` | low-level ordered `[{ id, length, value }]` |
 | `kshopParamsFrom(qr)` | account params to clone a KShop master QR |
+| `detach(qr)` | `{ type, account, transaction, decoded }` for any QR type |
+| `detectType(fields)` | `'promptpay'` \| `'billpayment'` \| `'kshop'` \| `'unknown'` |
 | `crc16Ccitt(str)` / `crc16Hex(str)` | CRC16-CCITT (number / 4-char hex) |
 | `formatMobile(str)` | 13-char PromptPay mobile proxy |
 | `toFile(path, payload, opts?)` | `Promise<void>` — write PNG file *(needs `qrcode`)* |
@@ -197,6 +293,7 @@ The second `options` argument is passed straight through to `qrcode`
 - `kshop.js` — KShop generator (configurable, no bundled merchant data).
 - `decode.js` — decode/parse a payload + `kshopParamsFrom` extractor.
 - `image.js` — optional image helpers (lazy-load `qrcode`).
+- `cli.js` — command-line inspector (`promptpay-qr` / `npm run decode`).
 - `index.js` — public entry point.
 - `test.js` — `npm test`. `example.js` — `npm run example`.
   `example-image.js` — `npm run example:image` (needs `qrcode`).

@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert');
-const { crc16Hex, generatePromptPay, generateBillPayment, formatMobile, generateKShopQR, decode, kshopParamsFrom } = require('./index');
+const { crc16Hex, generatePromptPay, generateBillPayment, formatMobile, generateKShopQR, decode, kshopParamsFrom, detach, detectType } = require('./index');
 const { buildTagPayload } = require('./kshop');
 
 let passed = 0;
@@ -166,12 +166,19 @@ const KSHOP_FIXTURE = {
   mcc: '5732',
   // tag 62 sub-TLVs: 05 (ref label, 9 chars) + 07 (terminal label, 8 chars)
   additionalData: '0509000000000070800000000',
+  dynamic: true, // fixture exercises the dynamic path explicitly
 };
 const k = generateKShopQR(100, 'REF0000000000001', KSHOP_FIXTURE);
-// 00 02 01  +  01 02 12  => "000201" + "010212" (dynamic, carries amount)
+// 00 02 01  +  01 02 12  => "000201" + "010212" (dynamic fixture, carries amount)
 check('starts with 000201010212', () => assert.ok(k.startsWith('000201010212')));
-check('POI method 12 (dynamic, has amount)', () => {
+check('POI method 12 when dynamic:true', () => {
   assert.strictEqual(parseTLV(k).find((t) => t.id === '01').value, '12');
+});
+check('KShop defaults to static POI 11 (K PLUS compatibility)', () => {
+  const def = generateKShopQR(100, 'R', {
+    billerId: '1', merchantRef: '2', merchantName: 'M', merchantCity: 'C',
+  });
+  assert.strictEqual(parseTLV(def).find((t) => t.id === '01').value, '11');
 });
 check('ends with valid 6304 CRC tag', () => {
   assert.strictEqual(k.slice(-8, -4), '6304');
@@ -186,6 +193,21 @@ check('tag 30 contains domestic AID, biller, ref, and reference', () => {
   assert.strictEqual(t30.find((t) => t.id === '01').value, KSHOP_FIXTURE.billerId);
   assert.strictEqual(t30.find((t) => t.id === '02').value, KSHOP_FIXTURE.merchantRef);
   assert.strictEqual(t30.find((t) => t.id === '03').value, 'REF0000000000001');
+});
+check('tag 31 defaults to KShop AID A000000677010113', () => {
+  const t31 = parseTLV(parseTLV(k).find((t) => t.id === '31').value);
+  assert.strictEqual(t31.find((t) => t.id === '00').value, 'A000000677010113');
+});
+check('innovationAid option sets the BOT AID, and round-trips', () => {
+  const { AID_PAYMENT_INNOVATION_BOT } = require('./index');
+  assert.strictEqual(AID_PAYMENT_INNOVATION_BOT, 'A000000677012004');
+  const q = generateKShopQR(100, 'R', Object.assign({}, KSHOP_FIXTURE, { innovationAid: AID_PAYMENT_INNOVATION_BOT }));
+  const t31 = parseTLV(parseTLV(q).find((t) => t.id === '31').value);
+  assert.strictEqual(t31.find((t) => t.id === '00').value, 'A000000677012004');
+  // detach captures innovationAid so regeneration reproduces it
+  const params = kshopParamsFrom(q);
+  assert.strictEqual(params.innovationAid, 'A000000677012004');
+  assert.strictEqual(generateKShopQR(100, 'R', params), q);
 });
 check('tag 59 merchant name from config', () => {
   assert.strictEqual(parseTLV(k).find((t) => t.id === '59').value, 'TEST MERCHANT');
@@ -208,6 +230,18 @@ check('optional card templates omitted when not provided', () => {
   const tags = parseTLV(minimal);
   assert.ok(!tags.some((t) => ['02', '04', '15', '51', '52', '62'].includes(t.id)));
   assert.strictEqual(minimal.slice(-4), crc16Hex(minimal.slice(0, -4)));
+});
+check('no amount -> omits tag 54 (static master), valid CRC, round-trips', () => {
+  // omit the fixture's dynamic:true so POI follows the auto rule (no amount -> 11)
+  const cfg = Object.assign({}, KSHOP_FIXTURE);
+  delete cfg.dynamic;
+  const q = generateKShopQR(null, 'REF', cfg);
+  const tags = parseTLV(q);
+  assert.ok(!tags.some((t) => t.id === '54'));
+  assert.strictEqual(parseTLV(q).find((t) => t.id === '01').value, '11');
+  assert.strictEqual(q.slice(-4), crc16Hex(q.slice(0, -4)));
+  const regen = generateKShopQR(detach(q).transaction.amount, 'REF', kshopParamsFrom(q));
+  assert.strictEqual(regen, q);
 });
 check('KSHOP dynamic:false yields static POI 11 + valid CRC', () => {
   const q = generateKShopQR(100, 'REF', Object.assign({}, KSHOP_FIXTURE, { dynamic: false }));
@@ -253,7 +287,7 @@ check('extracts account params from a KSHOP master QR', () => {
   assert.strictEqual(p.merchantName, 'TEST MERCHANT');
   assert.strictEqual(p.merchantCity, 'TEST CITY');
   assert.strictEqual(p.additionalData, KSHOP_FIXTURE.additionalData);
-  assert.strictEqual(p.dynamic, true);
+  assert.strictEqual(p.dynamic, true); // fixture is dynamic:true
 });
 check('regenerating with extracted params reproduces the master QR', () => {
   const params = kshopParamsFrom(k);
@@ -276,6 +310,63 @@ check('extracted params drive a NEW account QR', () => {
   assert.strictEqual(d.fields['30']['03'], 'ORDER123');
   assert.strictEqual(d.amount, 250.5);
   assert.strictEqual(d.crc.valid, true);
+});
+
+console.log('detach() — all types:');
+check('detects type for each generator', () => {
+  assert.strictEqual(detectType(decode(generatePromptPay({ mobile: '0812345678' })).fields), 'promptpay');
+  assert.strictEqual(detectType(decode(generateBillPayment({ billerId: '1', ref1: 'A' })).fields), 'billpayment');
+  assert.strictEqual(detectType(decode(k).fields), 'kshop');
+});
+check('promptpay (mobile) detaches and round-trips', () => {
+  const master = generatePromptPay({ mobile: '0812345678', amount: 100 });
+  const { type, account, transaction } = detach(master);
+  assert.strictEqual(type, 'promptpay');
+  assert.strictEqual(account.mobile, '0812345678');
+  assert.strictEqual(transaction.amount, 100);
+  const regen = generatePromptPay(Object.assign({}, account, transaction));
+  assert.strictEqual(regen, master);
+});
+check('promptpay (nationalId, static) detaches and round-trips', () => {
+  const master = generatePromptPay({ nationalId: '1234567890123' });
+  const { account, transaction } = detach(master);
+  assert.strictEqual(account.nationalId, '1234567890123');
+  assert.strictEqual(transaction.dynamic, false);
+  assert.strictEqual(generatePromptPay(Object.assign({}, account, transaction)), master);
+});
+check('promptpay (ewallet) detaches and round-trips', () => {
+  const master = generatePromptPay({ ewallet: '123456789012345', amount: 12.5 });
+  const { account, transaction } = detach(master);
+  assert.strictEqual(account.ewallet, '123456789012345');
+  assert.strictEqual(generatePromptPay(Object.assign({}, account, transaction)), master);
+});
+check('billpayment detaches account vs transaction and round-trips', () => {
+  const master = generateBillPayment({
+    billerId: '000000000000000', ref1: 'INV1', ref2: 'BR2', amount: 50,
+    merchantName: 'MY SHOP', merchantCity: 'BANGKOK',
+  });
+  const { type, account, transaction } = detach(master);
+  assert.strictEqual(type, 'billpayment');
+  assert.strictEqual(account.billerId, '000000000000000');
+  assert.strictEqual(account.merchantName, 'MY SHOP');
+  assert.strictEqual(transaction.ref1, 'INV1');
+  assert.strictEqual(transaction.ref2, 'BR2');
+  assert.strictEqual(transaction.amount, 50);
+  const regen = generateBillPayment(Object.assign({}, account, transaction));
+  assert.strictEqual(regen, master);
+});
+check('kshop detaches and round-trips via generateKShopQR', () => {
+  const { type, account, transaction } = detach(k);
+  assert.strictEqual(type, 'kshop');
+  assert.strictEqual(transaction.amount, 100);
+  assert.strictEqual(transaction.reference, 'REF0000000000001');
+  const regen = generateKShopQR(transaction.amount, transaction.reference, account);
+  assert.strictEqual(regen, k);
+});
+check('detach reuses a decode() result without re-parsing', () => {
+  const d = decode(k);
+  const { type } = detach(d);
+  assert.strictEqual(type, 'kshop');
 });
 
 console.log(`\nAll ${passed} checks passed.`);

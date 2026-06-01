@@ -23,6 +23,12 @@ function tlv(id, value) {
 /**
  * Resolve the Point of Initiation Method value (tag 01).
  *
+ * Per EMVCo, '11' (static) = the same QR is shown for more than one
+ * transaction; '12' (dynamic) = a new QR is shown for each transaction. This is
+ * an intent marker only — the payload does not enforce single use, so a '12' QR
+ * is still physically reusable; whether a repeat payment is accepted is up to
+ * the bank back-end. An amount may appear under either value.
+ *
  * `dynamic` overrides when set (`true` -> '12', `false` -> '11'). When left
  * undefined it defaults to dynamic if an amount is present, static otherwise.
  *
@@ -138,4 +144,4 @@ function generateBillPayment({ billerId, ref1, ref2, amount, dynamic, merchantNa
   return payload;
 }
 
-module.exports = { generatePromptPay, generateBillPayment, formatMobile, tlv };
+module.exports = { generatePromptPay, generateBillPayment, formatMobile, tlv, poiMethod };

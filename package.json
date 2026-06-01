@@ -4,6 +4,9 @@
   "description": "Zero-dependency PromptPay QR payload generator (PromptPay P2P, Tag 30 bill payment / Mae Manee, and KShop)",
   "main": "index.js",
   "type": "commonjs",
+  "bin": {
+    "promptpay-qr": "cli.js"
+  },
   "files": [
     "crc.js",
     "promptpay.js",
@@ -11,6 +14,7 @@
     "decode.js",
     "image.js",
     "index.js",
+    "cli.js",
     "docs/promptpay-qr-structure.md",
     "README.md",
     "LICENSE"
@@ -18,7 +22,8 @@
   "scripts": {
     "test": "node test.js",
     "example": "node example.js",
-    "example:image": "node example-image.js"
+    "example:image": "node example-image.js",
+    "decode": "node cli.js"
   },
   "peerDependencies": {
     "qrcode": "^1.5.0"

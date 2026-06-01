@@ -67,14 +67,23 @@ Example: `000201` = ID `00`, LEN `02`, VALUE `01`.
 
 ## 3. PromptPay Application IDs (AIDs)
 
-PromptPay merchant-account templates begin with sub-tag `00` = the AID.
+PromptPay merchant-account templates begin with sub-tag `00` = the AID. The
+values below are from the **Bank of Thailand "Policy Guideline: Standardized
+Thai QR Code for Payment Transactions" (17 April 2019)** — see §11.
 
-| AID | Purpose | Template |
-|-----|---------|----------|
-| `A000000677010111` | Credit Transfer (mobile / national ID / e-wallet) | tag `29` |
-| `A000000677010112` | Bill Payment (domestic biller) | tag `30` |
-| `A000000677010113` | Payment / e-wallet Innovation | tag `31` |
-| `A000000677010114` | Customer-Presented | (customer-side QR) |
+| AID | Purpose | Template | Source |
+|-----|---------|----------|--------|
+| `A000000677010111` | Credit Transfer w/ PromptPay ID (merchant-presented) | tag `29` | BOT |
+| `A000000677010114` | Credit Transfer (customer-presented) | tag `29` | BOT |
+| `A000000677010112` | Bill Payment — **domestic** merchant | tag `30` | BOT |
+| `A000000677012006` | Bill Payment — **cross-border** merchant | tag `30` | BOT |
+| `A000000677012004` | Payment Innovation (API) | tag `31` | BOT |
+| `A000000677010113` | Payment Innovation (as seen in KBank/KShop QRs) | tag `31` | **vendor — not in BOT guideline** |
+
+> ⚠️ The original PHP and real KShop QRs use `A000000677010113` in tag `31`. That
+> value is **not** documented in the BOT guideline (which lists `A000000677012004`
+> for the Payment-Innovation API template). It appears to be a KBank/KShop-specific
+> usage; the library reproduces whatever the caller/config provides.
 
 ---
 
@@ -83,12 +92,17 @@ PromptPay merchant-account templates begin with sub-tag `00` = the AID.
 ```
 29 LL
    00 16 A000000677010111      ← AID
-   01 13 0066812345678         ← mobile  (one of 01/02/03)
+   01 13 0066812345678         ← mobile  (one of 01..05)
    02 13 1234567890123         ← national ID / tax ID
    03 15 123456789012345       ← e-wallet ID
+   04 .. <bankcode+accountno>  ← bank account (BOT: ans, up to 43)
+   05 10 <OTA>                 ← mandatory if AID = ...010114 (customer-presented)
 ```
 
-Provide **exactly one** of sub-tags `01`/`02`/`03`.
+Provide **exactly one** of the identifier sub-tags. Per the BOT guideline,
+tag 29 also defines `04` (bank account = 3-digit bank code + account no.) and
+`05` (OTA, mandatory for the customer-presented AID). This library generates
+`01`/`02`/`03` (the common cases).
 
 **Mobile normalization** (sub-tag `01`, always 13 chars):
 1. Strip non-digits.
@@ -113,12 +127,16 @@ E-wallet ID → sub-tag `03`, 15 digits as-is.
    03 LL <Reference2>          ← optional, biller-defined
 ```
 
-- **Biller ID**: assigned by the bank; the merchant's 13-digit tax ID plus a
-  2-digit suffix (commonly `00`), so 15 chars.
-- **Reference 1 (`02`)**: mandatory. The biller decides its meaning — usually the
-  customer/account/invoice identifier. Alphanumeric.
-- **Reference 2 (`03`)**: optional secondary reference (e.g. branch, terminal,
-  order id). Alphanumeric. Omit the whole sub-tag if unused.
+Per the BOT guideline, tag 30 fields are: `00` AID (M), `01` Biller ID
+(N, **15**, M), `02` Reference 1 (ans, up to **20**, **M**), `03` Reference 2
+(ans, up to **20**, **O**).
+
+- **Biller ID**: "National ID / Tax ID + Suffix" — the merchant's 13-digit tax
+  ID plus a 2-digit suffix, so 15 chars. Bank-assigned.
+- **Reference 1 (`02`)**: **mandatory** (per BOT). Biller-defined meaning —
+  usually the customer/account/invoice identifier. Alphanumeric, ≤20.
+- **Reference 2 (`03`)**: **optional** (per BOT). Secondary reference (branch,
+  terminal, order id). Alphanumeric, ≤20. Omit the whole sub-tag if unused.
 
 > The KSHOP PHP puts the bank-issued merchant ref in `02` and the per-order
 > KShop reference in `03`. That's a valid biller-specific choice — not a fixed
@@ -166,14 +184,30 @@ payload += "6304" + crc16(payload + "6304").toString(16).toUpperCase().padStart(
 
 ## 8. Static vs Dynamic (tag 01)
 
-| Value | Meaning |
-|-------|---------|
-| `11` | **Static** — reusable; amount usually omitted, payer types it. |
-| `12` | **Dynamic** — single use; amount (`54`) present. |
+Per EMVCo, tag `01` signals **intent**, not a technical lock:
 
-Convention: include `54` ⇒ use `12`; omit `54` ⇒ use `11`. Scanners still read
-an amount even if `01=11` (as the KSHOP payload does), but `12` is the correct
-marker for a one-time amount.
+| Value | EMVCo definition |
+|-------|------------------|
+| `11` | **Static** — use when *the same QR is shown for more than one transaction*. |
+| `12` | **Dynamic** — use when *a new QR is shown for each transaction* (usually carries amount/reference). |
+
+Important nuances:
+
+- **The payload does not enforce single use.** A `12` payload has no nonce,
+  counter, expiry, or session token — it is just static text with `01=12`. So a
+  "dynamic" QR is physically **reusable**: re-scanning yields the same valid
+  payload. Whether a second payment is *accepted* is decided by the bank /
+  issuer back-end, not by the QR. (Observed: SCB accepts repeat payments on a
+  `12` QR.)
+- **An amount can appear under either value.** Including tag `54` doesn't
+  require `12`; e.g. KShop-style QRs use `11` *with* an amount (see §9), and
+  that form has the widest bank-app acceptance — notably **K PLUS rejects `12`**
+  for that merchant family.
+- Common shorthand calls `12` "one-time", but that's a convention (POS shows a
+  fresh code per sale), not a property of the payload.
+
+Practical guidance: omit `54` ⇒ `11` (reusable, payer types amount); fixed
+amount ⇒ either works — choose based on the target apps' acceptance.
 
 ---
 
@@ -229,3 +263,22 @@ only when they are provided.
 4. `53` = `764`, `58` = `TH`.
 5. Every TLV length matches its value; payload re-parses with no leftover bytes.
 6. Ends with `6304` + valid CRC16 of everything before the 4 CRC chars.
+
+---
+
+## 11. Official source
+
+The PromptPay-specific tags (29/30/31 AIDs and sub-tags, biller/reference
+definitions) in this document were verified against the **Bank of Thailand**
+primary source:
+
+> **"Policy Guideline: Standardized Thai QR Code for Payment Transactions"**,
+> Bank of Thailand, effective **17 April 2019 (B.E. 2562)**.
+> EN: <https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2562/EngPDF/25620084.pdf>
+> TH: <https://www.bot.or.th/content/dam/bot/fipcs/documents/FPG/2562/ThaiPDF/25620084.pdf>
+
+All top-level tags not specific to PromptPay (52/53/54/58/59/60/62/63 and the
+Point of Initiation method `01`) are defined by **EMVCo "QR Code Specification
+for Payment Systems: Merchant-Presented Mode (MPM)"**, which the BOT guideline
+references rather than redefines. In particular, the BOT guideline does **not**
+add its own static/dynamic semantics for tag `01` — see §8.
