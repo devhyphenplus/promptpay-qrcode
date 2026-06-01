@@ -65,8 +65,16 @@ generateBillPayment({
   dynamic: true,               // optional; force POI (true='12', false='11')
   merchantName: 'MY SHOP',     // optional (tag 59)
   merchantCity: 'BANGKOK',     // optional (tag 60)
+  additionalData: '07160000…', // optional raw tag 62 (e.g. terminal label sub-TLV)
+  countryCode: 'TH',           // optional (tag 58, default 'TH')
 });
 ```
+
+Tag order matches real Thai bill-payment QRs (`00,01,30,58,53,…,62,63` — note
+`58` before `53`), so a decoded bill-payment QR round-trips **byte-for-byte**:
+`generateBillPayment({ ...account, ...transaction })` from a `detach()` of an
+SCB/Mae Manee QR reproduces the original exactly (including its tag-62 terminal
+label).
 
 The Biller ID and references are issued/defined by your bank (for SCB, via the
 Mae Manee / Business QR onboarding). `ref1` is required; `ref2` is optional.
@@ -298,7 +306,7 @@ The second `options` argument is passed straight through to `qrcode`
 | Function | Returns |
 | --- | --- |
 | `generatePromptPay({ mobile \| nationalId \| ewallet, amount?, dynamic? })` | payload string |
-| `generateBillPayment({ billerId, ref1, ref2?, amount?, dynamic?, merchantName?, merchantCity? })` | payload string |
+| `generateBillPayment({ billerId, ref1, ref2?, amount?, dynamic?, merchantName?, merchantCity?, additionalData?, countryCode? })` | payload string |
 | `generateKShopQR(amount, reference, config)` | payload string |
 | `KSHOP_DEFAULTS` / `REQUIRED_FIELDS` | KShop structural defaults / required field list |
 | `decode(payload)` | structured decode + CRC validation |

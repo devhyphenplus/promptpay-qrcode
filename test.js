@@ -355,6 +355,24 @@ check('billpayment detaches account vs transaction and round-trips', () => {
   const regen = generateBillPayment(Object.assign({}, account, transaction));
   assert.strictEqual(regen, master);
 });
+check('billpayment with tag 62 + 58-before-53 layout round-trips byte-for-byte', () => {
+  // Real SCB-style bill-payment QR: tag order 00,01,30,58,53,62 and a tag-62
+  // terminal label. Placeholder biller/refs (no real merchant data).
+  const master = generateBillPayment({
+    billerId: '000000000000000',
+    ref1: '014000000000000',
+    ref2: 'SCB',
+    additionalData: '07160000000000000000', // tag 62 -> 07 (terminal label)
+  });
+  const { account, transaction } = detach(master);
+  assert.strictEqual(account.additionalData, '07160000000000000000');
+  assert.strictEqual(account.countryCode, 'TH');
+  const regen = generateBillPayment(Object.assign({}, account, transaction));
+  assert.strictEqual(regen, master);
+  // tag order check: 58 must come before 53
+  const ids = parseTLV(master).map((t) => t.id);
+  assert.ok(ids.indexOf('58') < ids.indexOf('53'));
+});
 check('kshop detaches and round-trips via generateKShopQR', () => {
   const { type, account, transaction } = detach(k);
   assert.strictEqual(type, 'kshop');

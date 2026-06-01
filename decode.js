@@ -291,6 +291,10 @@ function detach(qr) {
     if (t30['01'] != null) account.billerId = t30['01'];
     if (f['59'] != null) account.merchantName = f['59'];
     if (f['60'] != null) account.merchantCity = f['60'];
+    if (f['58'] != null) account.countryCode = f['58'];
+    // Tag 62 (Additional Data) — keep the raw inner string so it round-trips.
+    const raw62 = flattenTag62(d.tags);
+    if (raw62 != null) account.additionalData = raw62;
     transaction = {
       ref1: t30['02'],
       ref2: t30['03'] != null ? t30['03'] : undefined,

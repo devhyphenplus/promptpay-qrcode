@@ -115,9 +115,18 @@ function generatePromptPay({ mobile, nationalId, ewallet, amount, dynamic } = {}
  * @param {boolean} [opts.dynamic]     Force POI: true='12', false='11'. Auto if omitted.
  * @param {string} [opts.merchantName] Merchant name (tag 59).
  * @param {string} [opts.merchantCity] Merchant city (tag 60).
+ * @param {string} [opts.additionalData] Raw Additional Data Field (tag 62) value,
+ *                                       e.g. terminal label sub-TLV "0716...".
+ * @param {string} [opts.countryCode]  Country code (tag 58). Default 'TH'.
  * @returns {string} The EMVCo QR payload including CRC.
+ *
+ * Tag order follows the layout used by real Thai bill-payment QRs (SCB / Mae
+ * Manee): `00,01,30,58,53,[54],[59],[60],[62],63` — note `58` precedes `53`.
+ * This lets a decoded bill-payment QR round-trip byte-for-byte.
  */
-function generateBillPayment({ billerId, ref1, ref2, amount, dynamic, merchantName, merchantCity } = {}) {
+function generateBillPayment({
+  billerId, ref1, ref2, amount, dynamic, merchantName, merchantCity, additionalData, countryCode,
+} = {}) {
   if (!billerId) throw new Error('billerId is required');
   if (!ref1) throw new Error('ref1 is required');
 
@@ -132,13 +141,14 @@ function generateBillPayment({ billerId, ref1, ref2, amount, dynamic, merchantNa
   payload += tlv('00', '01'); // payload format indicator
   payload += tlv('01', poiMethod(dynamic, hasAmount)); // dynamic vs static
   payload += tlv('30', merchantAccount); // bill payment merchant account info
+  payload += tlv('58', countryCode || COUNTRY_TH); // country (before currency, per Thai QR layout)
   payload += tlv('53', CURRENCY_THB);
   if (hasAmount) {
     payload += tlv('54', Number(amount).toFixed(2));
   }
-  payload += tlv('58', COUNTRY_TH);
   if (merchantName) payload += tlv('59', merchantName);
   if (merchantCity) payload += tlv('60', merchantCity);
+  if (additionalData) payload += tlv('62', String(additionalData));
 
   payload += '6304' + crc16Hex(payload + '6304');
   return payload;
