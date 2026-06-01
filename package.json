@@ -1,6 +1,6 @@
 {
   "name": "promptpay-qrcode",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Zero-dependency PromptPay QR payload generator (PromptPay P2P, Tag 30 bill payment / Mae Manee, and KShop)",
   "main": "index.js",
   "type": "commonjs",
