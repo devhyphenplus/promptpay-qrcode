@@ -142,6 +142,34 @@ d.tags;          // ordered [{ id, length, value }] of the top level
 
 It throws on a malformed payload (a declared length running past the string).
 
+### Detecting supported payment channels
+
+A KShop/merchant QR carries a separate template per enrolled payment rail, so an
+omitted template means that channel isn't offered. `channels(qr)` reports them:
+
+```js
+const { channels } = require('promptpay-qrcode');
+
+channels(kshopQr);
+// {
+//   promptpay: true,
+//   creditCard: true,                       // false if the merchant isn't card-enabled
+//   networks: ['visa', 'mastercard', 'unionpay'],
+//   promptpayTemplates: ['30', '31'],
+//   cardTemplates: ['02', '04', '15', '51'],
+// }
+```
+
+So a KShop account configured **without** credit-card acceptance produces a QR
+with no card templates, and `channels()` returns `creditCard: false`,
+`networks: []`. PromptPay rails are detected from tags `29`/`30`/`31`; card
+networks from the EMVCo template ranges (`02`–`16`) and from card RIDs in the
+generic `26`–`51` range. `detach(qr)` also includes this under `.channels`.
+
+> This reflects what the merchant has **enrolled** (capability advertised by the
+> QR). Whether a specific card actually authorizes is still the acquirer's call
+> at settlement.
+
 ### Cloning another KShop account from its master QR
 
 `kshopParamsFrom(qr)` pulls out exactly the account-identifying fields you'd
@@ -276,8 +304,9 @@ The second `options` argument is passed straight through to `qrcode`
 | `decode(payload)` | structured decode + CRC validation |
 | `parseTLV(payload)` | low-level ordered `[{ id, length, value }]` |
 | `kshopParamsFrom(qr)` | account params to clone a KShop master QR |
-| `detach(qr)` | `{ type, account, transaction, decoded }` for any QR type |
+| `detach(qr)` | `{ type, account, transaction, channels, decoded }` for any QR type |
 | `detectType(fields)` | `'promptpay'` \| `'billpayment'` \| `'kshop'` \| `'unknown'` |
+| `channels(qr)` | `{ promptpay, creditCard, networks, promptpayTemplates, cardTemplates }` |
 | `crc16Ccitt(str)` / `crc16Hex(str)` | CRC16-CCITT (number / 4-char hex) |
 | `formatMobile(str)` | 13-char PromptPay mobile proxy |
 | `toFile(path, payload, opts?)` | `Promise<void>` — write PNG file *(needs `qrcode`)* |

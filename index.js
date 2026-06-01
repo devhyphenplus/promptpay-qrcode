@@ -3,7 +3,7 @@
 const { crc16Ccitt, crc16Hex } = require('./crc');
 const { generatePromptPay, generateBillPayment, formatMobile } = require('./promptpay');
 const { generateKShopQR, KSHOP_DEFAULTS, AID_PAYMENT_INNOVATION, AID_PAYMENT_INNOVATION_BOT } = require('./kshop');
-const { decode, parseTLV, kshopParamsFrom, detach, detectType } = require('./decode');
+const { decode, parseTLV, kshopParamsFrom, detach, detectType, channels } = require('./decode');
 const image = require('./image');
 
 module.exports = {
@@ -22,6 +22,7 @@ module.exports = {
   kshopParamsFrom,
   detach,
   detectType,
+  channels,
   // Optional image helpers (require the `qrcode` package).
   image,
   toFile: image.toFile,

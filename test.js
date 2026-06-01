@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert');
-const { crc16Hex, generatePromptPay, generateBillPayment, formatMobile, generateKShopQR, decode, kshopParamsFrom, detach, detectType } = require('./index');
+const { crc16Hex, generatePromptPay, generateBillPayment, formatMobile, generateKShopQR, decode, kshopParamsFrom, detach, detectType, channels } = require('./index');
 const { buildTagPayload } = require('./kshop');
 
 let passed = 0;
@@ -367,6 +367,40 @@ check('detach reuses a decode() result without re-parsing', () => {
   const d = decode(k);
   const { type } = detach(d);
   assert.strictEqual(type, 'kshop');
+});
+
+console.log('channels():');
+check('card-enabled KShop QR reports promptpay + card networks', () => {
+  // fixture k has visa/mastercard/unionpay templates (02/04/15/51)
+  const c = channels(k);
+  assert.strictEqual(c.promptpay, true);
+  assert.strictEqual(c.creditCard, true);
+  assert.deepStrictEqual(c.networks.sort(), ['mastercard', 'unionpay', 'visa']);
+  assert.ok(c.promptpayTemplates.includes('30') && c.promptpayTemplates.includes('31'));
+});
+check('PromptPay-only KShop QR reports no card support', () => {
+  const ppayOnly = generateKShopQR(100, 'R', {
+    billerId: '1', merchantRef: '2', merchantName: 'M', merchantCity: 'C',
+  });
+  const c = channels(ppayOnly);
+  assert.strictEqual(c.promptpay, true);
+  assert.strictEqual(c.creditCard, false);
+  assert.deepStrictEqual(c.networks, []);
+  assert.deepStrictEqual(c.cardTemplates, []);
+});
+check('standard PromptPay (tag 29) reports promptpay only', () => {
+  const c = channels(generatePromptPay({ mobile: '0812345678', amount: 5 }));
+  assert.strictEqual(c.promptpay, true);
+  assert.strictEqual(c.creditCard, false);
+});
+check('channels detects networks via card RID in 26-51 range', () => {
+  // tag 51 with Mastercard RID A0000000041010 should count as mastercard
+  const c = channels(k);
+  assert.ok(c.networks.includes('mastercard'));
+  assert.ok(c.cardTemplates.includes('51'));
+});
+check('detach() includes the channels summary', () => {
+  assert.strictEqual(detach(k).channels.creditCard, true);
 });
 
 console.log(`\nAll ${passed} checks passed.`);

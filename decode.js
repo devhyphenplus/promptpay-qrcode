@@ -174,6 +174,82 @@ function detectType(fields) {
   return 'unknown';
 }
 
+// PromptPay merchant-account templates -> rail name.
+const PROMPTPAY_TAG = { '29': 'credit-transfer', '30': 'bill-payment', '31': 'payment-innovation' };
+
+// EMVCo fixed template-ID allocations for card networks.
+const CARD_NETWORK_BY_TAG = {
+  '02': 'visa', '03': 'visa',
+  '04': 'mastercard', '05': 'mastercard',
+  '09': 'discover', '10': 'discover',
+  '11': 'amex', '12': 'amex',
+  '13': 'jcb', '14': 'jcb',
+  '15': 'unionpay', '16': 'unionpay',
+};
+
+// Card-network Registered Application Provider IDs (RID = first 10 chars of AID),
+// used to classify the generic merchant-template range 26-51 by its sub-tag 00.
+const CARD_RID = {
+  A000000003: 'visa', A000000004: 'mastercard', A000000025: 'amex',
+  A000000065: 'jcb', A000000152: 'discover', A000000333: 'unionpay',
+};
+
+/**
+ * Detect which payment rails a QR advertises. KShop (and other merchant QRs)
+ * include a separate template per enrolled rail, so an omitted template means
+ * that channel is not offered — e.g. a merchant not configured to accept cards
+ * has no card templates.
+ *
+ * Note: this reflects what the merchant has ENROLLED (capability advertised by
+ * the QR). Whether a given card actually authorizes is still the acquirer's
+ * decision at settlement.
+ *
+ * @param {string|object} qr A payload string or a prior decode() result.
+ * @returns {{
+ *   promptpay: boolean, creditCard: boolean,
+ *   networks: string[],
+ *   promptpayTemplates: string[], cardTemplates: string[]
+ * }}
+ */
+function channels(qr) {
+  const d = typeof qr === 'string' ? decode(qr) : qr;
+  const networks = new Set();
+  const promptpayTemplates = [];
+  const cardTemplates = [];
+
+  for (const { id } of d.tags) {
+    if (PROMPTPAY_TAG[id]) {
+      promptpayTemplates.push(id);
+      continue;
+    }
+    if (CARD_NETWORK_BY_TAG[id]) {
+      networks.add(CARD_NETWORK_BY_TAG[id]);
+      cardTemplates.push(id);
+      continue;
+    }
+    // Generic merchant-template range 26-51: classify by AID/RID in sub-tag 00.
+    const n = parseInt(id, 10);
+    if (n >= 26 && n <= 51 && typeof d.fields[id] === 'object') {
+      const aid = d.fields[id]['00'] || '';
+      if (aid.startsWith('A000000677')) {
+        // A PromptPay template living in the 26-51 range (rare); count it too.
+        if (!promptpayTemplates.includes(id)) promptpayTemplates.push(id);
+      } else if (CARD_RID[aid.slice(0, 10)]) {
+        networks.add(CARD_RID[aid.slice(0, 10)]);
+        cardTemplates.push(id);
+      }
+    }
+  }
+
+  return {
+    promptpay: promptpayTemplates.length > 0,
+    creditCard: networks.size > 0,
+    networks: [...networks],
+    promptpayTemplates,
+    cardTemplates,
+  };
+}
+
 /**
  * Detach a master QR into its reusable account info and its per-transaction
  * values. Works for all three types (auto-detected):
@@ -189,7 +265,7 @@ function detectType(fields) {
  *   kshop       -> generateKShopQR(transaction.amount, transaction.reference, account)
  *
  * @param {string|object} qr A payload string or a prior decode() result.
- * @returns {{ type: string, account: object, transaction: object, decoded: object }}
+ * @returns {{ type: string, account: object, transaction: object, channels: object, decoded: object }}
  */
 function detach(qr) {
   const d = typeof qr === 'string' ? decode(qr) : qr;
@@ -227,7 +303,7 @@ function detach(qr) {
     transaction = { amount: d.amount };
   }
 
-  return { type, account, transaction, decoded: d };
+  return { type, account, transaction, channels: channels(d), decoded: d };
 }
 
-module.exports = { decode, parseTLV, kshopParamsFrom, detach, detectType };
+module.exports = { decode, parseTLV, kshopParamsFrom, detach, detectType, channels };

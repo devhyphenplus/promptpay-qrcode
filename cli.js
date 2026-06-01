@@ -61,15 +61,21 @@ function main() {
   }
 
   if (json) {
-    console.log(JSON.stringify({ type: r.type, account: r.account, transaction: r.transaction, crc: d.crc }, null, 2));
+    console.log(JSON.stringify({ type: r.type, channels: r.channels, account: r.account, transaction: r.transaction, crc: d.crc }, null, 2));
     return;
   }
 
   const ok = d.crc && d.crc.valid;
+  const ch = r.channels;
+  const channelStr =
+    (ch.promptpay ? 'PromptPay' : '') +
+    (ch.creditCard ? (ch.promptpay ? ' + ' : '') + 'Card (' + ch.networks.join(', ') + ')' : '') ||
+    '(none)';
   console.log('Type      : ' + r.type);
   console.log('CRC       : ' + (d.crc ? d.crc.value : '(none)') + (ok ? '  ✓ valid' : '  ✗ INVALID (expected ' + (d.crc && d.crc.expected) + ')'));
   console.log('POI       : ' + d.poiMethod + (d.static ? '  (static)' : '  (dynamic)'));
   console.log('Amount    : ' + (d.amount == null ? '(none — payer enters)' : d.amount));
+  console.log('Channels  : ' + channelStr);
   if (d.merchantName) console.log('Merchant  : ' + d.merchantName + (d.merchantCity ? ' / ' + d.merchantCity : ''));
   console.log('\nAccount (reusable):');
   console.log(JSON.stringify(r.account, null, 2));
